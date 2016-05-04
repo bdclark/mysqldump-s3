@@ -13,7 +13,9 @@ do_monthly="01" # 01 to 31, 0 to disable monthly
 do_weekly="6"   # day of week 1-7, 1 is Monday, 0 disables weekly
 do_latest=true
 bucket=
+config_file=
 region="us-east-1"
+s3_prefix=
 s3_daily_prefix="daily"
 s3_weekly_prefix="weekly"
 s3_monthly_prefix="monthly"
@@ -21,6 +23,7 @@ s3_latest_prefix="latest"
 slave=false
 rds_slave=false
 dry_run=false
+folder_per_db=false
 
 # don't override these
 repl_stopped=0
@@ -43,6 +46,8 @@ usage(){
     -s      this is a slave, will pause replication during backup
     -S      this is an RDS read-replica, will stop replication during backup
     -b BKT  S3 bucket name
+    -d DIR  S3 prefix (will append daily/weekly/monthly if rotate enabled)
+    -F      folder per DB - put each db in own S3 folder
     -R RGN  AWS Region (default: us-east-1)
     -r      enable weekly/monthly rotation, files will be copied to
             weekly/monthly S3 prefixes if this option is enabled.
@@ -51,7 +56,7 @@ usage(){
             use 0 to disable monthly backups (only relevant if -R specified)
     -w INT  day of week to do weekly backups (1-7, 1 is Monday) (default: 6)
             use 0 to disable weekly backups (only relevant if -R specified)
-    -d      dry-run, explain only, will not pause replication or perform backups" >&2
+    -D      dry-run, explain only, will not pause replication or perform backups" >&2
   exit 1
 }
 
@@ -92,7 +97,7 @@ cleanup() {
   rm -f "$cnf_file"
 }
 
-while getopts ":f:u:p:H:P:e:i:sSb:R:rm:w:ldh" opt; do
+while getopts ":f:u:p:H:P:e:i:sSb:d:FR:rm:w:lDh" opt; do
   case $opt in
     f) config_file=$OPTARG;;
     u) user=$OPTARG;;
@@ -116,12 +121,14 @@ while getopts ":f:u:p:H:P:e:i:sSb:R:rm:w:ldh" opt; do
     s) slave=true;;
     S) rds_slave=true;;
     b) bucket=$OPTARG;;
+    d) s3_prefix=$OPTARG;;
+    F) folder_per_db=true;;
     R) region=$OPTARG;;
     r) rotate=true;;
     m) do_monthly=$OPTARG;;
     w) do_weekly=$OPTARG;;
     l) do_latest=false;;
-    d) dry_run=true;;
+    D) dry_run=true;;
     h) usage;;
     \?)
       echo "Invalid option: -$OPTARG" >&2
@@ -153,6 +160,7 @@ if [ -n "$included_dbs" ] && [ -n "$excluded_dbs" ]; then
 fi
 if [[ ! $do_weekly =~ ^[0-7]$ ]]; then die "invalid weekday"; fi
 if [[ ! $do_monthly =~ ^(0|0[0-9]|[12][0-9]|3[01])$ ]]; then die "invalid month day: $do_monthly"; fi
+if [ -n "$s3_prefix" ]; then bucket="$bucket/$s3_prefix"; fi
 
 if [ "$dry_run" = true ]; then echo "Dry run enabled"; fi
 
@@ -217,7 +225,17 @@ fi
 # do the needful
 for db in "${databases[@]}"; do
   fname="${db}_${stamp}.sql.gz"
-  s3_path="s3://$bucket/$s3_daily_prefix/$db/$fname"
+  if [ "$folder_per_db" = true ]; then
+    db_fname="$db/$fname"
+  else
+    db_fname="$fname"
+  fi
+  if [ "$rotate" = true ]; then
+    s3_path="s3://$bucket/$s3_daily_prefix/$db_fname"
+  else
+    s3_path="s3://$bucket/$db_fname"
+  fi
+
 
   echo "Dumping $db to $s3_path"
   if [ "$dry_run" != true ]; then
@@ -227,7 +245,7 @@ for db in "${databases[@]}"; do
   if [ "$rotate" = true ]; then
     # weekly
     if (( do_weekly == date_day_of_week )); then
-      s3_weekly_path="s3://$bucket/$s3_weekly_prefix/$db/$fname"
+      s3_weekly_path="s3://$bucket/$s3_weekly_prefix/$db_fname"
       if [ "$dry_run" = true ]; then
         echo "aws s3 cp \"$s3_path\" \"$s3_weekly_path\" --region \"$region\""
       else
@@ -237,7 +255,7 @@ for db in "${databases[@]}"; do
 
     # monthly
     if (( date_day_of_month == do_monthly || date_day_of_month == last_day_of_month && last_day_of_month < do_monthly )); then
-      s3_monthly_path="s3://$bucket/$s3_monthly_prefix/$db/$fname"
+      s3_monthly_path="s3://$bucket/$s3_monthly_prefix/$db_fname"
       if [ "$dry_run" = true ]; then
         echo "aws s3 cp \"$s3_path\" \"$s3_monthly_path\" --region \"$region\""
       else
