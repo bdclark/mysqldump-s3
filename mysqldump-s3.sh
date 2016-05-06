@@ -165,7 +165,7 @@ if [ -n "$s3_prefix" ]; then bucket="$bucket/$s3_prefix"; fi
 if [ "$dry_run" = true ]; then echo "Dry run enabled"; fi
 
 # write temporary defaults-file
-cnf_file=$(mktemp -t "$(basename "$0")".XXXXXXXXXX)
+cnf_file=$(mktemp -t mysqldump-s3.XXXXXXXXXX)
 cat << EOF > $cnf_file
 [client]
 user=$user
