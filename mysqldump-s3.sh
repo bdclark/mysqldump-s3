@@ -182,7 +182,7 @@ s3_stamp_match='????????T????Z' # must be able to match stamp above
 date_day_of_week=$(date -u +%u)
 date_day_of_month=$(date -u +%d)
 date_year=$(date -u +%Y)
-date_month=$(date -u +%m)
+date_month=$(date -u +%m | sed -e 's/^0//')
 last_day_of_month=$(days_in_month "$date_month" "$date_year")
 
 # get array of databases to backup
